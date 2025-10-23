@@ -15,11 +15,15 @@
 3. Name your project (e.g., "Google Places MCP")
 4. Click "Create"
 
-### Enable Places API
+### Enable Required APIs
 
 1. In the Cloud Console, go to "APIs & Services" → "Library"
-2. Search for "Places API (New)"
-3. Click on it and click "Enable"
+2. Enable the following APIs (search and enable each):
+   - **Places API (New)** - for place search and details
+   - **Weather API** - for current weather conditions (optional)
+   - **Elevation API** - for elevation data (optional)
+
+**Note:** All three APIs use the same API key.
 
 ### Create API Key
 
@@ -28,7 +32,7 @@
 3. Copy your API key (starts with `AIza...`)
 4. Click "Restrict Key" (recommended)
    - Under "API restrictions", select "Restrict key"
-   - Check "Places API (New)"
+   - Check the APIs you enabled (Places API (New), Weather API, Elevation API)
    - Click "Save"
 
 ## Step 2: Install the MCP Server
@@ -129,44 +133,21 @@ node test.mjs
 
 ## Step 5: Using the Tools
 
-The server provides four main tools:
+The server is now ready to use! See the [README.md](README.md#available-tools) for detailed documentation of all four tools:
+- **search_places** - Find places by query
+- **get_place_details** - Get full place information
+- **get_weather** - Get current weather conditions
+- **get_elevation** - Get elevation data
 
-### 1. Search Places
-Search for places by name or type:
-```javascript
-search_places({
-  query: "coffee shops",
-  location: { lat: 47.6062, lng: -122.3321 },
-  radius: 1000
-})
-```
+### Quick Test
 
-### 2. Get Place Details
-Retrieve detailed information about a specific place:
+Try searching for nearby coffee shops:
 ```javascript
-get_place_details({
-  place_id: "ChIJj61dQgK6j4AR4GeTYWZsKWw"
-})
-```
-
-### 3. Get Weather
-Get current weather conditions for a location:
-```javascript
-get_weather({
-  location: { lat: 47.6062, lng: -122.3321 },
-  units: "metric"  // or "imperial", "standard"
-})
-```
-
-### 4. Get Elevation
-Get elevation data for one or more locations:
-```javascript
-get_elevation({
-  locations: [
-    { lat: 47.6062, lng: -122.3321 },
-    { lat: 47.6101, lng: -122.3421 }
-  ]
-})
+{
+  "query": "coffee shops",
+  "location": {"lat": 47.6062, "lng": -122.3321},
+  "radius": 1000
+}
 ```
 
 ## Troubleshooting

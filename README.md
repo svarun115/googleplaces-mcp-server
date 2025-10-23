@@ -1,6 +1,6 @@
 # Google Places MCP Server
 
-Model Context Protocol server for Google Places API integration. Designed to search for places and provide Google Place IDs for linking to journal entries.
+Model Context Protocol server for Google Places API integration. Provides location search, place details, weather data, and elevation information.
 
 ## Features
 
@@ -8,45 +8,25 @@ Model Context Protocol server for Google Places API integration. Designed to sea
 - **Get Place Details**: Retrieve comprehensive information using Google Place ID
 - **Get Weather**: Current weather conditions using Google Weather API (part of Google Maps Platform)
 - **Get Elevation**: Elevation data for locations using Google Elevation API
-- **Journal Integration**: Returns place_id field for storing in journal database
+- **Single API Key**: All features use the same Google API key
 
-## Installation
+## Quick Start
 
+See [SETUP.md](SETUP.md) for detailed installation and configuration instructions.
+
+**TL;DR:**
 ```bash
-npm install
-npm run build
-npm install -g .
+# Install
+npm install && npm run build && npm install -g .
+
+# Configure API key
+export GOOGLE_PLACES_API_KEY="your_api_key_here"
+
+# Verify
+googleplaces-mcp-server --version
 ```
 
-## Configuration
-
-Set your Google API key:
-
-```bash
-export GOOGLE_PLACES_API_KEY="your_google_api_key_here"
-```
-
-Or create a `.env` file:
-```
-GOOGLE_PLACES_API_KEY=your_google_api_key_here
-```
-
-**Note:** The same API key is used for Places, Weather, and Elevation APIs.
-
-## Getting API Keys
-
-### Google API Key (Required)
-
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a new project or select existing
-3. Enable the following APIs:
-   - **Places API (New)** - for place search and details
-   - **Weather API** - for current weather conditions
-   - **Elevation API** - for elevation data
-4. Go to "Credentials" and create an API key
-5. (Optional) Restrict the API key to these three APIs only
-
-**All three APIs use the same Google API key!**
+**Get API Key:** Visit [Google Cloud Console](https://console.cloud.google.com/) and enable Places API (New), Weather API, and Elevation API. All three use the same API key.
 
 ## Usage
 
@@ -151,15 +131,17 @@ Get elevation data for one or more locations.
 }
 ```
 
-## Use Case: Journal Integration
+## Example Use Case
 
-This server is designed to help link journal entries to real-world places:
+Link locations to your application data:
 
-1. **Search**: User mentions "went to Starbucks on 5th Ave"
-2. **Get Suggestions**: Call `search_places` with query "Starbucks 5th Ave Seattle"
-3. **User Selects**: Present results, user chooses the correct location
-4. **Store**: Save the `place_id` in your journal database's locations table
-5. **Details**: Use `get_place_details` anytime to fetch current info about that place
+1. **Search**: User mentions a location (e.g., "Starbucks on 5th Ave")
+2. **Get Suggestions**: Call `search_places` with the query
+3. **User Selects**: Present results, user picks the correct location
+4. **Store**: Save the `place_id` in your database
+5. **Retrieve**: Use `get_place_details` anytime to fetch current information
+
+The `place_id` provides a persistent reference to a real-world location that stays valid even if the place changes names or moves slightly.
 
 ## Development
 
