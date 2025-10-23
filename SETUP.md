@@ -12,7 +12,7 @@
 
 1. Visit [Google Cloud Console](https://console.cloud.google.com/)
 2. Click "Select a project" → "New Project"
-3. Name your project (e.g., "Journal Places Integration")
+3. Name your project (e.g., "Google Places MCP")
 4. Click "Create"
 
 ### Enable Places API
@@ -127,42 +127,47 @@ Run:
 node test.mjs
 ```
 
-## Step 5: Integration with Journal
+## Step 5: Using the Tools
 
-Once the MCP server is working, you can use it to link places to journal entries:
+The server provides four main tools:
 
-### Database Schema
-
-The journal database should have a `locations` table with:
-```sql
-CREATE TABLE locations (
-  id UUID PRIMARY KEY,
-  name TEXT,
-  place_id TEXT,  -- Google Place ID goes here
-  latitude DECIMAL,
-  longitude DECIMAL,
-  address TEXT,
-  ...
-);
+### 1. Search Places
+Search for places by name or type:
+```javascript
+search_places({
+  query: "coffee shops",
+  location: { lat: 47.6062, lng: -122.3321 },
+  radius: 1000
+})
 ```
 
-### Workflow
+### 2. Get Place Details
+Retrieve detailed information about a specific place:
+```javascript
+get_place_details({
+  place_id: "ChIJj61dQgK6j4AR4GeTYWZsKWw"
+})
+```
 
-1. **User creates journal entry**: "Had coffee at Starbucks on Pine St"
-2. **Search for place**:
-   ```
-   search_places({
-     query: "Starbucks Pine St Seattle",
-     location: {lat: 47.6101, lng: -122.3421}
-   })
-   ```
-3. **Present results**: Show user list of matching Starbucks locations
-4. **User selects**: User picks the correct location
-5. **Store place_id**: Save the `place_id` to your locations table
-6. **Retrieve details anytime**:
-   ```
-   get_place_details({ place_id: "ChIJ..." })
-   ```
+### 3. Get Weather
+Get current weather conditions for a location:
+```javascript
+get_weather({
+  location: { lat: 47.6062, lng: -122.3321 },
+  units: "metric"  // or "imperial", "standard"
+})
+```
+
+### 4. Get Elevation
+Get elevation data for one or more locations:
+```javascript
+get_elevation({
+  locations: [
+    { lat: 47.6062, lng: -122.3321 },
+    { lat: 47.6101, lng: -122.3421 }
+  ]
+})
+```
 
 ## Troubleshooting
 
@@ -206,13 +211,13 @@ Monitor usage in Google Cloud Console → "APIs & Services" → "Dashboard"
 ## Next Steps
 
 1. Install the companion VS Code extension for easier access
-2. Test integration with your journal database
+2. Integrate with your application or workflow
 3. Set up error logging for production use
 4. Consider caching place results to reduce API calls
 
 ## Support
 
 For issues related to:
-- **MCP Server**: Check GitHub issues at blueewhitee/GooglePlaces-MCP
+- **MCP Server**: Check GitHub issues at [svarun115/googleplaces-mcp-server](https://github.com/svarun115/googleplaces-mcp-server)
+- **VS Code Extension**: Check GitHub issues at [svarun115/googleplaces-mcp-vscode-extension](https://github.com/svarun115/googleplaces-mcp-vscode-extension)
 - **Google Places API**: See [official documentation](https://developers.google.com/maps/documentation/places/web-service/overview)
-- **Journal Integration**: Refer to your journal database documentation
