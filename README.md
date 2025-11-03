@@ -1,6 +1,6 @@
 # Google Places MCP Server
 
-Model Context Protocol server for Google Places API integration. Provides location search, place details, weather data, and elevation information.
+WebSocket-based Model Context Protocol server for Google Places API integration. Provides location search, place details, weather data, and elevation information using JSON-RPC 2.0 communication protocol.
 
 ## Features
 
@@ -14,42 +14,16 @@ Model Context Protocol server for Google Places API integration. Provides locati
 
 See [SETUP.md](SETUP.md) for detailed installation and configuration instructions.
 
-**TL;DR:**
 ```bash
-# Install
-npm install && npm run build && npm install -g .
+# 1. Get your API key from Google Cloud Console
+# 2. Set environment variable
+export GOOGLE_PLACES_API_KEY="your_api_key"
 
-# Configure API key
-export GOOGLE_PLACES_API_KEY="your_api_key_here"
-
-# Verify
-googleplaces-mcp-server --version
+# 3. Start the server
+googleplaces-mcp-server
 ```
 
-**Get API Key:** Visit [Google Cloud Console](https://console.cloud.google.com/) and enable Places API (New), Weather API, and Elevation API. All three use the same API key.
-
-## Usage
-
-### With Claude Desktop
-
-Add to your Claude Desktop config (`claude_desktop_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "googleplaces": {
-      "command": "googleplaces-mcp-server",
-      "env": {
-        "GOOGLE_PLACES_API_KEY": "your_api_key_here"
-      }
-    }
-  }
-}
-```
-
-### With VS Code Extension
-
-Install the companion VS Code extension and configure your API key in settings.
+The server runs on `http://localhost:3000` by default.
 
 ## Available Tools
 

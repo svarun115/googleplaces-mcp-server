@@ -1,4 +1,6 @@
-# Setup Guide: Google Places MCP Server
+# Setup Guide: Google Places HTTP MCP Server
+
+This is a WebSocket-based MCP (Model Context Protocol) server using JSON-RPC for bidirectional communication. It provides access to Google Places API, Weather API, and Elevation API through a modern MCP-compliant interface.
 
 ## Prerequisites
 
@@ -55,24 +57,63 @@ Expected output: `googleplaces-mcp-server version 1.0.0`
 
 ### Option A: Environment Variable (Recommended)
 
-Add to your shell profile (`.bashrc`, `.zshrc`, etc.):
+**On Windows (bash.exe):**
 ```bash
 export GOOGLE_PLACES_API_KEY="AIza..."
 ```
 
-Reload your shell:
+Then verify it's set:
 ```bash
+echo $GOOGLE_PLACES_API_KEY
+```
+
+To make it permanent, add it to your `.bashrc`:
+```bash
+echo 'export GOOGLE_PLACES_API_KEY="AIza..."' >> ~/.bashrc
 source ~/.bashrc
 ```
 
-### Option B: Claude Desktop Config
+**On macOS/Linux:**
+```bash
+export GOOGLE_PLACES_API_KEY="AIza..."
+```
 
-Edit `claude_desktop_config.json`:
+Add to `.bashrc`, `.zshrc`, etc. for permanent setup.
+
+**On Windows (PowerShell):**
+```powershell
+$env:GOOGLE_PLACES_API_KEY="AIza..."
+```
+
+For permanent setup, add to PowerShell profile:
+```powershell
+Add-Content $PROFILE 'export GOOGLE_PLACES_API_KEY="AIza..."'
+```
+
+### Option B: Pass as Environment Variable When Starting
+
+**bash.exe (Windows):**
+```bash
+export GOOGLE_PLACES_API_KEY="AIza..."
+googleplaces-mcp-server
+```
+
+**PowerShell (Windows):**
+```powershell
+$env:GOOGLE_PLACES_API_KEY="AIza..."
+googleplaces-mcp-server
+```
+
+### Option C: Add to MCP Client Configuration
+
+For clients that support HTTP MCP servers, configure the server URL:
+
+**Example for Claude Desktop:**
 ```json
 {
   "mcpServers": {
     "googleplaces": {
-      "command": "googleplaces-mcp-server",
+      "url": "http://localhost:3000",
       "env": {
         "GOOGLE_PLACES_API_KEY": "AIza..."
       }
@@ -81,76 +122,264 @@ Edit `claude_desktop_config.json`:
 }
 ```
 
-### Option C: VS Code Extension Settings
+## Step 4: Configure for Your MCP Client
 
-1. Install the Google Places MCP VS Code Extension
-2. Open VS Code Settings (Ctrl+,)
-3. Search for "Google Places API Key"
-4. Enter your API key
+### For VS Code (with MCP Client Extension)
 
-## Step 4: Test the Server
+1. Install the MCP Client extension in VS Code
+2. Open VS Code settings (Ctrl+, or Cmd+,)
+3. Search for "mcp" to find MCP client settings
+4. Add a new server configuration:
 
-### Test with Node.js
+```json
+{
+  "mcp.servers": {
+    "googleplaces": {
+      "url": "ws://localhost:3000",
+      "env": {
+        "GOOGLE_PLACES_API_KEY": "your_api_key_here"
+      }
+    }
+  }
+}
+```
 
-Create a test file `test.mjs`:
+### For Claude Desktop
+
+Edit `claude_desktop_config.json` (location varies by OS):
+
+**macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+**Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+**Linux:** `~/.config/Claude/claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "googleplaces": {
+      "url": "ws://localhost:3000",
+      "env": {
+        "GOOGLE_PLACES_API_KEY": "AIza..."
+      }
+    }
+  }
+}
+```
+
+## Step 5: Start the HTTP Server
+
+In a terminal, start the server with:
+
+**On macOS/Linux:**
+```bash
+GOOGLE_PLACES_API_KEY="AIza..." googleplaces-mcp-server
+```
+
+**On Windows (with bash.exe):**
+```bash
+export GOOGLE_PLACES_API_KEY="AIza..."
+googleplaces-mcp-server
+```
+
+**On Windows (PowerShell):**
+```powershell
+$env:GOOGLE_PLACES_API_KEY="AIza..."
+googleplaces-mcp-server
+```
+
+**On Windows (Command Prompt):**
+```cmd
+set GOOGLE_PLACES_API_KEY=AIza...
+googleplaces-mcp-server
+```
+
+The server will start on `ws://localhost:3000` (WebSocket) by default.
+
+To use a different port (bash.exe example):
+```bash
+export PORT=8080
+export GOOGLE_PLACES_API_KEY="AIza..."
+googleplaces-mcp-server
+```
+
+Keep this terminal running. Your MCP client will connect via WebSocket to `ws://localhost:3000`.
+
+## Step 6: Test the Server
+
+### Health Check
+
+```bash
+curl http://localhost:3000/health
+```
+
+Expected output:
+```json
+{"status":"ok","version":"1.0.0"}
+```
+
+### Test with WebSocket (Node.js)
+
+Create a test file `test-ws.mjs`:
 
 ```javascript
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import WebSocket from 'ws';
 
-const transport = new StdioClientTransport({
-  command: 'googleplaces-mcp-server',
-  env: { GOOGLE_PLACES_API_KEY: 'AIza...' }
+const ws = new WebSocket('ws://localhost:3000');
+
+ws.on('open', () => {
+  console.log('Connected to server');
+
+  // Initialize
+  ws.send(JSON.stringify({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'initialize',
+    params: {}
+  }));
 });
 
-const client = new Client({
-  name: 'test-client',
-  version: '1.0.0'
-}, { capabilities: {} });
+ws.on('message', (data) => {
+  const response = JSON.parse(data);
+  console.log('Received:', JSON.stringify(response, null, 2));
 
-await client.connect(transport);
+  // After initialization, list tools
+  if (response.id === 1) {
+    ws.send(JSON.stringify({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/list',
+      params: {}
+    }));
+  }
 
-// List available tools
-const tools = await client.listTools();
-console.log('Available tools:', tools);
+  // After listing tools, call a tool
+  if (response.id === 2) {
+    ws.send(JSON.stringify({
+      jsonrpc: '2.0',
+      id: 3,
+      method: 'tools/call',
+      params: {
+        name: 'search_places',
+        arguments: {
+          query: 'coffee shops',
+          location: { lat: 47.6062, lng: -122.3321 },
+          radius: 1000
+        }
+      }
+    }));
+  }
 
-// Test search
-const result = await client.callTool('search_places', {
-  query: 'coffee shops',
-  location: { lat: 47.6062, lng: -122.3321 },
-  radius: 1000
+  // Close after tool response
+  if (response.id === 3) {
+    ws.close();
+  }
 });
 
-console.log('Search results:', result);
-
-await client.close();
+ws.on('error', (error) => {
+  console.error('WebSocket error:', error);
+});
 ```
 
 Run:
 ```bash
-node test.mjs
+npm install ws
+node test-ws.mjs
 ```
 
-## Step 5: Using the Tools
+## API Endpoints
 
-The server is now ready to use! See the [README.md](README.md#available-tools) for detailed documentation of all four tools:
-- **search_places** - Find places by query
-- **get_place_details** - Get full place information
-- **get_weather** - Get current weather conditions
-- **get_elevation** - Get elevation data
+### WebSocket Connection (JSON-RPC 2.0)
 
-### Quick Test
+Connect to `ws://localhost:3000` using a WebSocket client. All communication uses JSON-RPC 2.0 over the persistent WebSocket connection.
 
-Try searching for nearby coffee shops:
-```javascript
+**Initialize Request:**
+```json
 {
-  "query": "coffee shops",
-  "location": {"lat": 47.6062, "lng": -122.3321},
-  "radius": 1000
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "initialize",
+  "params": {}
 }
 ```
 
+**List Tools Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "tools/list",
+  "params": {}
+}
+```
+
+**Call Tool Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "tools/call",
+  "params": {
+    "name": "search_places",
+    "arguments": {
+      "query": "coffee shops",
+      "location": {"lat": 47.6062, "lng": -122.3321},
+      "radius": 1000
+    }
+  }
+}
+```
+
+**Response Format:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": { "...": "..." }
+}
+```
+
+### Health Check (HTTP)
+
+```bash
+curl http://localhost:3000/health
+```
+
+Expected output:
+```json
+{"status":"ok","version":"1.0.0"}
+```
+
+## Available Tools
+
+For detailed tool descriptions, parameters, and examples, see [README.md](README.md#available-tools).
+
+Quick reference:
+- **search_places** - Find places by text query
+- **get_place_details** - Get full place information by Place ID
+- **get_weather** - Get current weather conditions for coordinates
+- **get_elevation** - Get elevation data for locations
+
+## Environment Variables
+
+- `GOOGLE_PLACES_API_KEY` (required): Your Google Places API key
+- `PORT` (optional): Port to run the server on (default: 3000)
+
 ## Troubleshooting
+
+### "'export' is not recognized" error (Windows)
+
+You're using Command Prompt or PowerShell, not bash. Use the correct syntax for your shell:
+
+**Command Prompt:**
+```cmd
+set GOOGLE_PLACES_API_KEY=your_api_key
+googleplaces-mcp-server
+```
+
+**PowerShell:**
+```powershell
+$env:GOOGLE_PLACES_API_KEY="your_api_key"
+googleplaces-mcp-server
+```
 
 ### "API key not found" error
 
@@ -170,11 +399,18 @@ Try searching for nearby coffee shops:
 - Ensure the API key is allowed to use Places API
 - Verify your billing is enabled (Google requires it even for free tier)
 
-### Command not found: googleplaces-mcp-server
+### Port already in use
 
-- Verify global install: `npm list -g googleplaces-mcp-server`
-- Check npm global bin path: `npm config get prefix`
-- Ensure that path is in your system PATH
+If port 3000 is already in use, specify a different port:
+```bash
+PORT=8080 GOOGLE_PLACES_API_KEY="AIza..." googleplaces-mcp-server
+```
+
+### Connection refused
+
+- Ensure the server is running
+- Check that you're using the correct host and port
+- Verify firewall settings aren't blocking the connection
 
 ## API Usage Limits
 
@@ -191,14 +427,14 @@ Monitor usage in Google Cloud Console → "APIs & Services" → "Dashboard"
 
 ## Next Steps
 
-1. Install the companion VS Code extension for easier access
-2. Integrate with your application or workflow
+1. Integrate the HTTP server URL into your MCP client
+2. Start making requests to the server endpoints
 3. Set up error logging for production use
 4. Consider caching place results to reduce API calls
+5. Monitor API usage and costs in Google Cloud Console
 
 ## Support
 
 For issues related to:
 - **MCP Server**: Check GitHub issues at [svarun115/googleplaces-mcp-server](https://github.com/svarun115/googleplaces-mcp-server)
-- **VS Code Extension**: Check GitHub issues at [svarun115/googleplaces-mcp-vscode-extension](https://github.com/svarun115/googleplaces-mcp-vscode-extension)
 - **Google Places API**: See [official documentation](https://developers.google.com/maps/documentation/places/web-service/overview)
