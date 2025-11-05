@@ -1,8 +1,7 @@
 #!/usr/bin/env node
-import { ErrorCode, McpError, } from '@modelcontextprotocol/sdk/types.js';
-import express from 'express';
-import { createServer as createHttpServer } from 'http';
-import { WebSocketServer } from 'ws';
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { CallToolRequestSchema, ListToolsRequestSchema, ErrorCode, McpError, } from '@modelcontextprotocol/sdk/types.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 // Handle --version flag
 if (process.argv.includes('--version')) {
     console.log('googleplaces-mcp-server version 1.0.0');
@@ -267,132 +266,49 @@ async function handleGetElevation(args) {
 // Start the server
 async function main() {
     const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001;
-    const app = express();
-    app.use(express.json());
-    // Health check endpoint
-    app.get('/health', (_req, res) => {
-        res.json({ status: 'ok', version: '1.0.0' });
-    });
-    // HTTP GET response for MCP client initial fetch/handshake
-    app.get('/', (_req, res) => {
-        res.status(200).json({ status: 'ok', type: 'mcp-server', version: '1.0.0' });
-    });
-    // HTTP POST response for MCP client requests (before WebSocket upgrade)
-    app.post('/', (_req, res) => {
-        res.status(200).json({ status: 'ok', type: 'mcp-server', version: '1.0.0' });
-    });
-    const httpServer = createHttpServer(app);
-    // Create WebSocket server - accepts connections on any path
-    const wss = new WebSocketServer({ noServer: true });
-    // Handle HTTP upgrade requests for WebSocket
-    httpServer.on('upgrade', (request, socket, head) => {
-        console.error(`[DEBUG] Upgrade request for path: ${request.url}`);
-        wss.handleUpgrade(request, socket, head, (ws) => {
-            console.error('[DEBUG] WebSocket upgrade successful');
-            wss.emit('connection', ws, request);
+    const useHttp = process.argv.includes('--http');
+    const useStdio = process.argv.includes('--stdio');
+    if (useHttp) {
+        // Run in HTTP mode (Streamable HTTP per MCP spec)
+        const { runHttpServer } = await import('./transport/http.js');
+        console.error(`[DEBUG] Starting in HTTP mode (Streamable HTTP) on localhost:${PORT}/mcp...`);
+        runHttpServer(PORT);
+    }
+    else {
+        // Run in stdio mode (default)
+        console.error('[DEBUG] Starting in Stdio mode...');
+        const app = new Server({
+            name: 'googleplaces-mcp-server',
+            version: '1.0.0',
         });
-    });
-    // Handle WebSocket connections
-    wss.on('connection', (ws) => {
-        console.error('[DEBUG] WebSocket client connected');
-        let isInitialized = false;
-        ws.on('message', async (data) => {
-            try {
-                const message = JSON.parse(data.toString());
-                console.error('[DEBUG] Received message:', JSON.stringify(message));
-                let result;
-                let sendError = false;
-                // Handle initialize - required first call
-                if (message.method === 'initialize') {
-                    console.error('[DEBUG] Processing initialize request');
-                    isInitialized = true;
-                    result = {
-                        protocolVersion: '2024-11-05',
-                        capabilities: {
-                            tools: {},
-                        },
-                        serverInfo: {
-                            name: 'googleplaces-mcp-server',
-                            version: '1.0.0',
-                        },
-                    };
-                }
-                // Handle tools/list
-                else if (message.method === 'tools/list') {
-                    console.error('[DEBUG] Processing tools/list request');
-                    result = { tools: TOOLS };
-                }
-                // Handle tools/call
-                else if (message.method === 'tools/call') {
-                    const { name, arguments: args } = message.params || {};
-                    console.error(`[DEBUG] Processing tool call: ${name}`);
-                    if (name === 'search_places') {
-                        result = await handleSearchPlaces(args);
-                    }
-                    else if (name === 'get_place_details') {
-                        result = await handleGetPlaceDetails(args);
-                    }
-                    else if (name === 'get_weather') {
-                        result = await handleGetWeather(args);
-                    }
-                    else if (name === 'get_elevation') {
-                        result = await handleGetElevation(args);
-                    }
-                    else {
-                        throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
-                    }
-                }
-                else {
-                    throw new McpError(ErrorCode.MethodNotFound, `Unknown method: ${message.method}`);
-                }
-                // Send JSON-RPC 2.0 response
-                const response = {
-                    jsonrpc: '2.0',
-                    id: message.id,
-                };
-                if (sendError) {
-                    response.error = result;
-                }
-                else {
-                    response.result = result;
-                }
-                console.error('[DEBUG] Sending response:', JSON.stringify(response));
-                ws.send(JSON.stringify(response));
+        app.setRequestHandler(ListToolsRequestSchema, async () => ({
+            tools: TOOLS,
+        }));
+        app.setRequestHandler(CallToolRequestSchema, async (request) => {
+            const { name, arguments: args } = request.params;
+            console.error(`[DEBUG] Calling tool: ${name}`);
+            let result;
+            if (name === 'search_places') {
+                result = await handleSearchPlaces(args);
             }
-            catch (error) {
-                const errorMessage = error instanceof Error ? error.message : String(error);
-                const errorCode = error instanceof McpError ? error.code : -32603;
-                console.error('[DEBUG] Error processing message:', errorMessage);
-                const errorResponse = {
-                    jsonrpc: '2.0',
-                    id: data.id || null,
-                    error: {
-                        code: errorCode,
-                        message: errorMessage,
-                    },
-                };
-                console.error('[DEBUG] Sending error response:', JSON.stringify(errorResponse));
-                ws.send(JSON.stringify(errorResponse));
+            else if (name === 'get_place_details') {
+                result = await handleGetPlaceDetails(args);
             }
+            else if (name === 'get_weather') {
+                result = await handleGetWeather(args);
+            }
+            else if (name === 'get_elevation') {
+                result = await handleGetElevation(args);
+            }
+            else {
+                throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
+            }
+            return result;
         });
-        ws.on('close', () => {
-            console.error('[DEBUG] WebSocket client disconnected');
-        });
-        ws.on('error', (error) => {
-            console.error('[DEBUG] WebSocket error:', error);
-        });
-    });
-    httpServer.listen(PORT, () => {
-        console.log(`Google Places MCP server listening on ws://localhost:${PORT}`);
-        console.error(`[DEBUG] Server initialized on port ${PORT}`);
-    });
-    process.on('SIGINT', () => {
-        console.error('[DEBUG] Shutting down...');
-        httpServer.close(() => {
-            console.error('[DEBUG] Server closed');
-            process.exit(0);
-        });
-    });
+        const transport = new StdioServerTransport();
+        await app.connect(transport);
+        console.error('[DEBUG] Google Places MCP server connected on stdio');
+    }
 }
 main().catch((error) => {
     console.error('Server error:', error);
