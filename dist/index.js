@@ -265,9 +265,17 @@ async function handleGetElevation(args) {
 }
 // Start the server
 async function main() {
-    const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001;
     const useHttp = process.argv.includes('--http');
     const useStdio = process.argv.includes('--stdio');
+    // Parse port from command line args or environment
+    let PORT = 3001;
+    const portIndex = process.argv.indexOf('--port');
+    if (portIndex !== -1 && portIndex + 1 < process.argv.length) {
+        PORT = parseInt(process.argv[portIndex + 1]);
+    }
+    else if (process.env.PORT) {
+        PORT = parseInt(process.env.PORT);
+    }
     if (useHttp) {
         // Run in HTTP mode (Streamable HTTP per MCP spec)
         const { runHttpServer } = await import('./transport/http.js');
