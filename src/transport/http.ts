@@ -334,57 +334,105 @@ const TOOLS = [
   },
 ];
 
-function formatDirectionsLocation(loc: any): string {
-  if (loc.place_id) return `place_id:${loc.place_id}`;
-  if (loc.lat !== undefined && loc.lng !== undefined) return `${loc.lat},${loc.lng}`;
+const ROUTES_TRAVEL_MODE: Record<string, string> = {
+  driving: 'DRIVE',
+  walking: 'WALK',
+  transit: 'TRANSIT',
+  bicycling: 'BICYCLE',
+};
+
+function buildRoutesWaypoint(loc: any): any {
+  if (loc.place_id) return { placeId: loc.place_id };
+  if (loc.lat !== undefined && loc.lng !== undefined) {
+    return { location: { latLng: { latitude: loc.lat, longitude: loc.lng } } };
+  }
   throw new Error('Location must have place_id or lat/lng');
+}
+
+function parseDuration(durationStr: string): { value: number; text: string } {
+  const seconds = parseInt(durationStr.replace('s', ''), 10) || 0;
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.round((seconds % 3600) / 60);
+  const text = hours > 0 ? `${hours} hr ${minutes} min` : `${minutes} min`;
+  return { value: seconds, text };
 }
 
 async function handleGetDirections(args: any) {
   const { origin, destination, mode = 'driving', departure_time } = args;
-  console.error(`[DEBUG] Getting directions from ${JSON.stringify(origin)} to ${JSON.stringify(destination)}, mode: ${mode}`);
+  const travelMode = ROUTES_TRAVEL_MODE[mode] || 'DRIVE';
+  console.error(`[DEBUG] Getting directions mode=${travelMode} from ${JSON.stringify(origin)} to ${JSON.stringify(destination)}`);
 
-  const params = new URLSearchParams({
-    origin: formatDirectionsLocation(origin),
-    destination: formatDirectionsLocation(destination),
-    mode,
-    key: GOOGLE_PLACES_API_KEY!,
-  });
+  const body: any = {
+    origin: buildRoutesWaypoint(origin),
+    destination: buildRoutesWaypoint(destination),
+    travelMode,
+  };
 
-  if (departure_time) {
-    params.set('departure_time', departure_time);
+  if (travelMode === 'DRIVE') {
+    body.routingPreference = 'TRAFFIC_AWARE';
   }
 
-  const url = `https://maps.googleapis.com/maps/api/directions/json?${params}`;
-  const response = await fetch(url);
+  if (departure_time) {
+    const ts = parseInt(departure_time, 10);
+    body.departureTime = departure_time === 'now'
+      ? new Date().toISOString()
+      : isNaN(ts) ? departure_time : new Date(ts * 1000).toISOString();
+  }
+
+  const fieldMask = [
+    'routes.duration',
+    'routes.distanceMeters',
+    'routes.description',
+    'routes.legs.duration',
+    'routes.legs.distanceMeters',
+    'routes.legs.steps.navigationInstruction',
+    'routes.legs.steps.distanceMeters',
+    'routes.legs.steps.staticDuration',
+    'routes.legs.steps.transitDetails',
+    'routes.legs.steps.travelMode',
+  ].join(',');
+
+  const response = await fetch('https://routes.googleapis.com/directions/v2:computeRoutes', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Goog-Api-Key': GOOGLE_PLACES_API_KEY!,
+      'X-Goog-FieldMask': fieldMask,
+    },
+    body: JSON.stringify(body),
+  });
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`Directions API error (${response.status}): ${errorText}`);
+    throw new Error(`Routes API error (${response.status}): ${errorText}`);
   }
 
   const data: any = await response.json();
 
-  if (data.status !== 'OK') {
-    throw new Error(`Directions API error: ${data.status}${data.error_message ? ` — ${data.error_message}` : ''}`);
+  if (!data.routes || data.routes.length === 0) {
+    throw new Error('No routes found');
   }
 
   const route = data.routes[0];
-  const leg = route.legs[0];
+  const leg = route.legs?.[0];
 
-  const steps = (leg.steps || []).map((step: any) => {
+  const duration = parseDuration(route.duration || '0s');
+  const distanceKm = route.distanceMeters ? `${(route.distanceMeters / 1000).toFixed(1)} km` : null;
+
+  const steps = (leg?.steps || []).map((step: any) => {
     const s: any = {
-      mode: step.travel_mode,
-      duration: step.duration?.text,
-      distance: step.distance?.text,
-      instruction: step.html_instructions?.replace(/<[^>]*>/g, ''),
+      mode: step.travelMode,
+      duration: step.staticDuration ? parseDuration(step.staticDuration).text : null,
+      distance: step.distanceMeters ? `${(step.distanceMeters / 1000).toFixed(1)} km` : null,
+      instruction: step.navigationInstruction?.instructions,
     };
-    if (step.transit_details) {
+    if (step.transitDetails) {
+      const td = step.transitDetails;
       s.transit = {
-        line: step.transit_details.line?.short_name || step.transit_details.line?.name,
-        departure_stop: step.transit_details.departure_stop?.name,
-        arrival_stop: step.transit_details.arrival_stop?.name,
-        num_stops: step.transit_details.num_stops,
+        line: td.transitLine?.nameShort || td.transitLine?.name,
+        departure_stop: td.stopDetails?.departureStop?.name,
+        arrival_stop: td.stopDetails?.arrivalStop?.name,
+        num_stops: td.stopCount,
       };
     }
     return s;
@@ -396,21 +444,13 @@ async function handleGetDirections(args: any) {
         type: 'text',
         text: JSON.stringify({
           success: true,
-          origin: leg.start_address,
-          destination: leg.end_address,
           mode,
-          duration: {
-            value: leg.duration?.value,
-            text: leg.duration?.text,
-          },
-          duration_in_traffic: leg.duration_in_traffic
-            ? { value: leg.duration_in_traffic.value, text: leg.duration_in_traffic.text }
-            : null,
+          duration,
           distance: {
-            value: leg.distance?.value,
-            text: leg.distance?.text,
+            value: route.distanceMeters,
+            text: distanceKm,
           },
-          summary: route.summary,
+          summary: route.description,
           steps,
         }, null, 2),
       },
