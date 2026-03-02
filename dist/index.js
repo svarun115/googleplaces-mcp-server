@@ -103,6 +103,43 @@ const TOOLS = [
             required: ['locations'],
         },
     },
+    {
+        name: 'get_directions',
+        description: 'Get directions and travel time between two locations. Supports driving, walking, transit, and bicycling modes. Use for commute time estimation during daily planning.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                origin: {
+                    type: 'object',
+                    description: 'Starting location. Provide either place_id or lat/lng coordinates.',
+                    properties: {
+                        place_id: { type: 'string', description: 'Google Place ID' },
+                        lat: { type: 'number' },
+                        lng: { type: 'number' },
+                    },
+                },
+                destination: {
+                    type: 'object',
+                    description: 'Ending location. Provide either place_id or lat/lng coordinates.',
+                    properties: {
+                        place_id: { type: 'string', description: 'Google Place ID' },
+                        lat: { type: 'number' },
+                        lng: { type: 'number' },
+                    },
+                },
+                mode: {
+                    type: 'string',
+                    description: 'Travel mode (default: driving)',
+                    enum: ['driving', 'walking', 'transit', 'bicycling'],
+                },
+                departure_time: {
+                    type: 'string',
+                    description: 'Departure time for traffic-aware duration. Use "now" for current conditions, or a Unix timestamp string. Only applies to driving and transit.',
+                },
+            },
+            required: ['origin', 'destination'],
+        },
+    },
 ];
 async function handleSearchPlaces(args) {
     const { query, location, radius = 5000 } = args;
@@ -263,6 +300,81 @@ async function handleGetElevation(args) {
         ],
     };
 }
+function formatDirectionsLocation(loc) {
+    if (loc.place_id)
+        return `place_id:${loc.place_id}`;
+    if (loc.lat !== undefined && loc.lng !== undefined)
+        return `${loc.lat},${loc.lng}`;
+    throw new Error('Location must have place_id or lat/lng');
+}
+async function handleGetDirections(args) {
+    const { origin, destination, mode = 'driving', departure_time } = args;
+    console.error(`[DEBUG] Getting directions from ${JSON.stringify(origin)} to ${JSON.stringify(destination)}, mode: ${mode}`);
+    const params = new URLSearchParams({
+        origin: formatDirectionsLocation(origin),
+        destination: formatDirectionsLocation(destination),
+        mode,
+        key: GOOGLE_PLACES_API_KEY,
+    });
+    if (departure_time) {
+        params.set('departure_time', departure_time);
+    }
+    const url = `https://maps.googleapis.com/maps/api/directions/json?${params}`;
+    const response = await fetch(url);
+    if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Directions API error (${response.status}): ${errorText}`);
+    }
+    const data = await response.json();
+    if (data.status !== 'OK') {
+        throw new Error(`Directions API error: ${data.status}${data.error_message ? ` — ${data.error_message}` : ''}`);
+    }
+    const route = data.routes[0];
+    const leg = route.legs[0];
+    const steps = (leg.steps || []).map((step) => {
+        const s = {
+            mode: step.travel_mode,
+            duration: step.duration?.text,
+            distance: step.distance?.text,
+            instruction: step.html_instructions?.replace(/<[^>]*>/g, ''),
+        };
+        if (step.transit_details) {
+            s.transit = {
+                line: step.transit_details.line?.short_name || step.transit_details.line?.name,
+                departure_stop: step.transit_details.departure_stop?.name,
+                arrival_stop: step.transit_details.arrival_stop?.name,
+                num_stops: step.transit_details.num_stops,
+            };
+        }
+        return s;
+    });
+    return {
+        content: [
+            {
+                type: 'text',
+                text: JSON.stringify({
+                    success: true,
+                    origin: leg.start_address,
+                    destination: leg.end_address,
+                    mode,
+                    duration: {
+                        value: leg.duration?.value,
+                        text: leg.duration?.text,
+                    },
+                    duration_in_traffic: leg.duration_in_traffic
+                        ? { value: leg.duration_in_traffic.value, text: leg.duration_in_traffic.text }
+                        : null,
+                    distance: {
+                        value: leg.distance?.value,
+                        text: leg.distance?.text,
+                    },
+                    summary: route.summary,
+                    steps,
+                }, null, 2),
+            },
+        ],
+    };
+}
 // Start the server
 async function main() {
     const useHttp = process.argv.includes('--http');
@@ -307,6 +419,9 @@ async function main() {
             }
             else if (name === 'get_elevation') {
                 result = await handleGetElevation(args);
+            }
+            else if (name === 'get_directions') {
+                result = await handleGetDirections(args);
             }
             else {
                 throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
