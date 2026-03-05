@@ -104,6 +104,20 @@ const TOOLS = [
         },
     },
     {
+        name: 'geocode_address',
+        description: 'Convert a human-readable address or place name to lat/lng coordinates. Use before calling get_weather or get_directions when you have an address instead of coordinates.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                address: {
+                    type: 'string',
+                    description: 'Address or place name to geocode (e.g., "Microsoft India, Hyderabad" or "Eiffel Tower, Paris")',
+                },
+            },
+            required: ['address'],
+        },
+    },
+    {
         name: 'get_directions',
         description: 'Get directions and travel time between two locations. Supports driving, walking, transit, and bicycling modes. Use for commute time estimation during daily planning.',
         inputSchema: {
@@ -300,50 +314,119 @@ async function handleGetElevation(args) {
         ],
     };
 }
-function formatDirectionsLocation(loc) {
-    if (loc.place_id)
-        return `place_id:${loc.place_id}`;
-    if (loc.lat !== undefined && loc.lng !== undefined)
-        return `${loc.lat},${loc.lng}`;
-    throw new Error('Location must have place_id or lat/lng');
-}
-async function handleGetDirections(args) {
-    const { origin, destination, mode = 'driving', departure_time } = args;
-    console.error(`[DEBUG] Getting directions from ${JSON.stringify(origin)} to ${JSON.stringify(destination)}, mode: ${mode}`);
-    const params = new URLSearchParams({
-        origin: formatDirectionsLocation(origin),
-        destination: formatDirectionsLocation(destination),
-        mode,
-        key: GOOGLE_PLACES_API_KEY,
-    });
-    if (departure_time) {
-        params.set('departure_time', departure_time);
-    }
-    const url = `https://maps.googleapis.com/maps/api/directions/json?${params}`;
+async function handleGeocodeAddress(args) {
+    const { address } = args;
+    console.error(`[DEBUG] Geocoding address: "${address}"`);
+    const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${GOOGLE_PLACES_API_KEY}`;
     const response = await fetch(url);
     if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`Directions API error (${response.status}): ${errorText}`);
+        throw new Error(`Geocoding API error (${response.status}): ${errorText}`);
     }
     const data = await response.json();
-    if (data.status !== 'OK') {
-        throw new Error(`Directions API error: ${data.status}${data.error_message ? ` — ${data.error_message}` : ''}`);
+    if (data.status !== 'OK' && data.status !== 'ZERO_RESULTS') {
+        throw new Error(`Geocoding API error: ${data.status}`);
+    }
+    const results = (data.results || []).slice(0, 3).map((r) => ({
+        formatted_address: r.formatted_address,
+        lat: r.geometry.location.lat,
+        lng: r.geometry.location.lng,
+        place_id: r.place_id,
+        types: r.types,
+    }));
+    return {
+        content: [{
+                type: 'text',
+                text: JSON.stringify({ success: true, address, count: results.length, results }, null, 2),
+            }],
+    };
+}
+const ROUTES_TRAVEL_MODE = {
+    driving: 'DRIVE',
+    walking: 'WALK',
+    transit: 'TRANSIT',
+    bicycling: 'BICYCLE',
+};
+function buildRoutesWaypoint(loc) {
+    if (loc.place_id)
+        return { placeId: loc.place_id };
+    if (loc.lat !== undefined && loc.lng !== undefined) {
+        return { location: { latLng: { latitude: loc.lat, longitude: loc.lng } } };
+    }
+    throw new Error('Location must have place_id or lat/lng');
+}
+function parseDuration(durationStr) {
+    const seconds = parseInt(durationStr.replace('s', ''), 10) || 0;
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.round((seconds % 3600) / 60);
+    const text = hours > 0 ? `${hours} hr ${minutes} min` : `${minutes} min`;
+    return { value: seconds, text };
+}
+async function handleGetDirections(args) {
+    const { origin, destination, mode = 'driving', departure_time } = args;
+    const travelMode = ROUTES_TRAVEL_MODE[mode] || 'DRIVE';
+    console.error(`[DEBUG] Getting directions mode=${travelMode} from ${JSON.stringify(origin)} to ${JSON.stringify(destination)}`);
+    const body = {
+        origin: buildRoutesWaypoint(origin),
+        destination: buildRoutesWaypoint(destination),
+        travelMode,
+    };
+    if (travelMode === 'DRIVE') {
+        body.routingPreference = 'TRAFFIC_AWARE';
+    }
+    if (departure_time) {
+        const ts = parseInt(departure_time, 10);
+        body.departureTime = departure_time === 'now'
+            ? new Date().toISOString()
+            : isNaN(ts) ? departure_time : new Date(ts * 1000).toISOString();
+    }
+    const fieldMask = [
+        'routes.duration',
+        'routes.distanceMeters',
+        'routes.description',
+        'routes.legs.duration',
+        'routes.legs.distanceMeters',
+        'routes.legs.steps.navigationInstruction',
+        'routes.legs.steps.distanceMeters',
+        'routes.legs.steps.staticDuration',
+        'routes.legs.steps.transitDetails',
+        'routes.legs.steps.travelMode',
+    ].join(',');
+    const response = await fetch('https://routes.googleapis.com/directions/v2:computeRoutes', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-Goog-Api-Key': GOOGLE_PLACES_API_KEY,
+            'X-Goog-FieldMask': fieldMask,
+        },
+        body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Routes API error (${response.status}): ${errorText}`);
+    }
+    const data = await response.json();
+    if (!data.routes || data.routes.length === 0) {
+        throw new Error('No routes found');
     }
     const route = data.routes[0];
-    const leg = route.legs[0];
-    const steps = (leg.steps || []).map((step) => {
+    const leg = route.legs?.[0];
+    const duration = parseDuration(route.duration || '0s');
+    const distanceKm = route.distanceMeters ? `${(route.distanceMeters / 1000).toFixed(1)} km` : null;
+    const steps = (leg?.steps || []).map((step) => {
         const s = {
-            mode: step.travel_mode,
-            duration: step.duration?.text,
-            distance: step.distance?.text,
-            instruction: step.html_instructions?.replace(/<[^>]*>/g, ''),
+            mode: step.travelMode,
+            duration: step.staticDuration ? parseDuration(step.staticDuration).text : null,
+            distance: step.distanceMeters ? `${(step.distanceMeters / 1000).toFixed(1)} km` : null,
+            instruction: step.navigationInstruction?.instructions,
         };
-        if (step.transit_details) {
+        if (step.transitDetails) {
+            const td = step.transitDetails;
             s.transit = {
-                line: step.transit_details.line?.short_name || step.transit_details.line?.name,
-                departure_stop: step.transit_details.departure_stop?.name,
-                arrival_stop: step.transit_details.arrival_stop?.name,
-                num_stops: step.transit_details.num_stops,
+                line: td.transitLine?.nameShort || td.transitLine?.name,
+                departure_stop: td.stopDetails?.departureStop?.name,
+                arrival_stop: td.stopDetails?.arrivalStop?.name,
+                num_stops: td.stopCount,
             };
         }
         return s;
@@ -354,21 +437,13 @@ async function handleGetDirections(args) {
                 type: 'text',
                 text: JSON.stringify({
                     success: true,
-                    origin: leg.start_address,
-                    destination: leg.end_address,
                     mode,
-                    duration: {
-                        value: leg.duration?.value,
-                        text: leg.duration?.text,
-                    },
-                    duration_in_traffic: leg.duration_in_traffic
-                        ? { value: leg.duration_in_traffic.value, text: leg.duration_in_traffic.text }
-                        : null,
+                    duration,
                     distance: {
-                        value: leg.distance?.value,
-                        text: leg.distance?.text,
+                        value: route.distanceMeters,
+                        text: distanceKm,
                     },
-                    summary: route.summary,
+                    summary: route.description,
                     steps,
                 }, null, 2),
             },
@@ -410,6 +485,9 @@ async function main() {
             let result;
             if (name === 'search_places') {
                 result = await handleSearchPlaces(args);
+            }
+            else if (name === 'geocode_address') {
+                result = await handleGeocodeAddress(args);
             }
             else if (name === 'get_place_details') {
                 result = await handleGetPlaceDetails(args);

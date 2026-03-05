@@ -118,6 +118,20 @@ const TOOLS = [
     },
   },
   {
+    name: 'geocode_address',
+    description: 'Convert a human-readable address or place name to lat/lng coordinates. Use before calling get_weather or get_directions when you have an address instead of coordinates.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        address: {
+          type: 'string',
+          description: 'Address or place name to geocode (e.g., "Microsoft India, Hyderabad" or "Eiffel Tower, Paris")',
+        },
+      },
+      required: ['address'],
+    },
+  },
+  {
     name: 'get_directions',
     description: 'Get directions and travel time between two locations. Supports driving, walking, transit, and bicycling modes. Use for commute time estimation during daily planning.',
     inputSchema: {
@@ -345,6 +359,40 @@ async function handleGetElevation(args: any) {
   };
 }
 
+async function handleGeocodeAddress(args: any) {
+  const { address } = args;
+  console.error(`[DEBUG] Geocoding address: "${address}"`);
+
+  const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${GOOGLE_PLACES_API_KEY}`;
+  const response = await fetch(url);
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Geocoding API error (${response.status}): ${errorText}`);
+  }
+
+  const data: any = await response.json();
+
+  if (data.status !== 'OK' && data.status !== 'ZERO_RESULTS') {
+    throw new Error(`Geocoding API error: ${data.status}`);
+  }
+
+  const results = (data.results || []).slice(0, 3).map((r: any) => ({
+    formatted_address: r.formatted_address,
+    lat: r.geometry.location.lat,
+    lng: r.geometry.location.lng,
+    place_id: r.place_id,
+    types: r.types,
+  }));
+
+  return {
+    content: [{
+      type: 'text',
+      text: JSON.stringify({ success: true, address, count: results.length, results }, null, 2),
+    }],
+  };
+}
+
 const ROUTES_TRAVEL_MODE: Record<string, string> = {
   driving: 'DRIVE',
   walking: 'WALK',
@@ -508,6 +556,8 @@ async function main() {
 
       if (name === 'search_places') {
         result = await handleSearchPlaces(args);
+      } else if (name === 'geocode_address') {
+        result = await handleGeocodeAddress(args);
       } else if (name === 'get_place_details') {
         result = await handleGetPlaceDetails(args);
       } else if (name === 'get_weather') {
